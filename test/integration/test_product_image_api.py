@@ -1,5 +1,6 @@
 
 from fastapi.testclient import TestClient
+from unittest.mock import patch
 
 
 def create_category(api_client: TestClient) -> int:
@@ -278,3 +279,95 @@ def test_delete_image_rejects_missing_image(
     )
 
     assert response.status_code == 404
+
+
+# -------------------------
+# Upload API
+# -------------------------
+
+def test_upload_product_image_returns_201(api_client: TestClient) -> None:
+    category_id = create_category(api_client)
+    product_id = create_product(api_client, category_id)
+
+    with patch(
+        "app.services.product_image_service.get_storage_client"
+    ) as get_storage_client:
+        storage = get_storage_client.return_value
+        storage.upload.return_value = (
+            f"products/{product_id}/unique.png",
+            f"https://example.com/products/{product_id}/unique.png",
+        )
+
+        response = api_client.post(
+            f"/api/v1/products/{product_id}/images/upload",
+            files={
+                "file": (
+                    "notebook.png",
+                    b"\x89PNG\r\n\x1a\nvalid-test-data",
+                    "image/png",
+                )
+            },
+            data={
+                "alt_text": "Notebook cover",
+                "sort_order": "0",
+                "is_primary": "true",
+            },
+        )
+
+    assert response.status_code == 201, response.text
+    image = response.json()
+    assert image["product_id"] == product_id
+    assert image["storage_key"] == f"products/{product_id}/unique.png"
+    assert image["content_type"] == "image/png"
+    assert image["alt_text"] == "Notebook cover"
+    assert image["is_primary"] is True
+    assert image["file_size_bytes"] == len(
+        b"\x89PNG\r\n\x1a\nvalid-test-data"
+    )
+    storage.upload.assert_called_once()
+
+
+def test_upload_product_image_rejects_invalid_file(
+    api_client: TestClient,
+) -> None:
+    category_id = create_category(api_client)
+    product_id = create_product(api_client, category_id)
+
+    with patch(
+        "app.services.product_image_service.get_storage_client"
+    ) as get_storage_client:
+        response = api_client.post(
+            f"/api/v1/products/{product_id}/images/upload",
+            files={
+                "file": (
+                    "not-image.png",
+                    b"this is not an image",
+                    "image/png",
+                )
+            },
+        )
+
+    assert response.status_code == 422, response.text
+    get_storage_client.assert_not_called()
+
+
+def test_upload_product_image_rejects_missing_product(
+    api_client: TestClient,
+) -> None:
+    with patch(
+        "app.services.product_image_service.get_storage_client"
+    ) as get_storage_client:
+        response = api_client.post(
+            "/api/v1/products/999999/images/upload",
+            files={
+                "file": (
+                    "notebook.png",
+                    b"\x89PNG\r\n\x1a\nvalid-test-data",
+                    "image/png",
+                )
+            },
+        )
+
+    assert response.status_code == 404, response.text
+    get_storage_client.assert_not_called()
+
