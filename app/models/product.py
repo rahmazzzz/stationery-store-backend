@@ -20,10 +20,12 @@ from app.core.database import Base
 
 if TYPE_CHECKING:
     from app.models.category import Category
+    from app.models.product_image import ProductImage
 
 
 class Product(Base):
     __tablename__ = "products"
+
 
     __table_args__ = (
         CheckConstraint(
@@ -50,9 +52,15 @@ class Product(Base):
             "discount_type != 'fixed' OR discount_value <= price",
             name="ck_products_fixed_discount_max_price",
         ),
+        CheckConstraint(
+            "discount_type != 'none' OR discount_value = 0",
+            name="ck_products_no_discount_value_when_none",
+        ),
     )
 
-    # Primary key
+
+
+     # Primary key
     id: Mapped[int] = mapped_column(primary_key=True)
 
     # Category relationship
@@ -64,6 +72,12 @@ class Product(Base):
 
     category: Mapped["Category"] = relationship(
         back_populates="products",
+    )
+    images: Mapped[list["ProductImage"]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="ProductImage.sort_order",
     )
 
     # Product information

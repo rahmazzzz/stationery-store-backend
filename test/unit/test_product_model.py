@@ -85,6 +85,7 @@ def test_product_has_discount_constraints() -> None:
         "ck_products_discount_type",
         "ck_products_percentage_max_100",
         "ck_products_fixed_discount_max_price",
+        "ck_products_no_discount_value_when_none",
     }
 
     assert expected_constraints.issubset(constraint_names)
