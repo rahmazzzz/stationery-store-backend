@@ -188,6 +188,23 @@ def test_product_rejects_negative_discount(
     db_session.rollback()
 
 
+def test_product_rejects_nonzero_discount_when_type_is_none(
+    db_session: Session,
+) -> None:
+    category = create_category(db_session)
+
+    with pytest.raises(IntegrityError):
+        create_product(
+            db_session,
+            category.id,
+            discount_type="none",
+            discount_value=Decimal("10.00"),
+        )
+
+    db_session.rollback()
+
+
+
 def test_product_rejects_invalid_discount_type(
     db_session: Session,
 ) -> None:

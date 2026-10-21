@@ -5,6 +5,8 @@ from sqlalchemy import text
 from app.core.database import engine
 from app.exceptions.handlers import register_exception_handlers
 from app.routers.category_router import router as category_router
+from app.routers.product_router import router as product_router
+from app.routers.product_image_router import router as product_image_router
 
 
 app = FastAPI(
@@ -16,6 +18,8 @@ app = FastAPI(
 register_exception_handlers(app)
 
 app.include_router(category_router)
+app.include_router(product_router)
+app.include_router(product_image_router)
 
 
 @app.get("/health", tags=["Health"])

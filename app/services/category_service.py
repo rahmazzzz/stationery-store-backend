@@ -24,8 +24,13 @@ class CategoryService:
             raise ConflictError("A category with this slug already exists.")
 
         try:
-            return self._repository.create(data)
+            with self._session.begin_nested():
+                return self._repository.create(data)
         except IntegrityError as exc:
+            # Covers uniqueness races and database constraint violations.
+            raise ConflictError(
+                "A category with this name or slug already exists."
+            ) from exc
             # Covers uniqueness races between the checks and the insert.
             raise ConflictError(
                 "A category with this name or slug already exists."
@@ -97,7 +102,8 @@ class CategoryService:
             raise ConflictError("A category with this slug already exists.")
 
         try:
-            return self._repository.update(category, data)
+            with self._session.begin_nested():
+                return self._repository.update(category, data)
         except IntegrityError as exc:
             raise ConflictError(
                 "A category with this name or slug already exists."
@@ -108,7 +114,8 @@ class CategoryService:
         category = self.get_by_id(category_id)
 
         try:
-            self._repository.delete(category)
+            with self._session.begin_nested():
+                self._repository.delete(category)
         except IntegrityError as exc:
             raise ConflictError(
                 "Cannot delete this category because it may contain products."

@@ -10,6 +10,16 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.database import Base
 from app.models import Category, Product
+from collections.abc import Generator
+
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
+from app.container.dependencies import (
+    get_database_session,
+    get_write_database_session,
+)
+from app.main import app
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -121,3 +131,30 @@ def db_session(test_engine) -> Generator[Session, None, None]:
 def database_models() -> tuple[type[Category], type[Product]]:
     """Provide the registered SQLAlchemy model classes."""
     return Category, Product
+
+
+@pytest.fixture()
+def api_client(
+    db_session: Session,
+) -> Generator[TestClient, None, None]:
+    """Provide an API client backed by the isolated test session."""
+
+    def override_database_session() -> Generator[Session, None, None]:
+        yield db_session
+
+    app.dependency_overrides[get_database_session] = (
+        override_database_session
+    )
+    app.dependency_overrides[get_write_database_session] = (
+        override_database_session
+    )
+
+    try:
+        with TestClient(app) as client:
+            yield client
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+        app.dependency_overrides.pop(
+            get_write_database_session,
+            None,
+        )

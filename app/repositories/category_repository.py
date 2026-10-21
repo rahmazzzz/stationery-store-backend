@@ -69,7 +69,7 @@ class CategoryRepository:
         self.session.delete(category)
         self.session.flush()
 
-    
+
     def name_exists(
         self,
         name: str,
@@ -83,6 +83,7 @@ class CategoryRepository:
             statement = statement.where(Category.id != exclude_id)
 
         return self.session.scalar(statement) is not None
+
 
     def slug_exists(
         self,
