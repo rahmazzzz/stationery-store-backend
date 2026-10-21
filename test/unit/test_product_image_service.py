@@ -307,3 +307,328 @@ def test_delete_image_rejects_missing_image(
         service.delete(1, 999)
 
     repository.delete.assert_not_called()
+    
+    
+    
+# -------------------------
+# Cloud image upload
+# -------------------------
+
+def test_upload_image_success(
+    service_setup, product, product_image
+):
+    service, repository, session = service_setup
+    session.get.return_value = product
+    repository.get_by_storage_key.return_value = None
+    repository.create.return_value = product_image
+
+    storage = MagicMock()
+    storage.upload.return_value = (
+        "products/1/unique.png",
+        "https://example.supabase.co/storage/v1/object/public/product-images/products/1/unique.png",
+    )
+
+    png_content = b"\x89PNG\r\n\x1a\n" + b"fake-image-content"
+
+    result = service.upload(
+        1,
+        filename="sticker.png",
+        content=png_content,
+        content_type="image/png",
+        alt_text="Floral sticker",
+        storage=storage,
+    )
+
+    assert result is product_image
+    storage.upload.assert_called_once_with(
+        product_id=1,
+        filename="sticker.png",
+        content=png_content,
+        content_type="image/png",
+    )
+    repository.create.assert_called_once()
+
+    saved_values = repository.create.call_args.args[0]
+    assert saved_values["product_id"] == 1
+    assert saved_values["storage_key"] == "products/1/unique.png"
+    assert saved_values["content_type"] == "image/png"
+    assert saved_values["file_size_bytes"] == len(png_content)
+    assert saved_values["alt_text"] == "Floral sticker"
+
+
+def test_upload_image_rejects_unsupported_content(service_setup):
+    service, repository, session = service_setup
+    storage = MagicMock()
+
+    with pytest.raises(ValidationError, match="Unsupported image file"):
+        service.upload(
+            1,
+            filename="malicious.png",
+            content=b"not actually an image",
+            content_type="image/png",
+            storage=storage,
+        )
+
+    storage.upload.assert_not_called()
+    repository.create.assert_not_called()
+    session.get.assert_not_called()
+
+
+def test_upload_image_rejects_mismatched_content_type(service_setup):
+    service, repository, session = service_setup
+    storage = MagicMock()
+    png_content = b"\x89PNG\r\n\x1a\n" + b"fake-image-content"
+
+    with pytest.raises(ValidationError, match="does not match"):
+        service.upload(
+            1,
+            filename="sticker.jpg",
+            content=png_content,
+            content_type="image/jpeg",
+            storage=storage,
+        )
+
+    storage.upload.assert_not_called()
+    repository.create.assert_not_called()
+
+
+def test_upload_image_rejects_files_over_10_mb(service_setup):
+    service, repository, session = service_setup
+    storage = MagicMock()
+    oversized_content = (
+        b"\x89PNG\r\n\x1a\n" + b"x" * (10 * 1024 * 1024)
+    )
+
+    with pytest.raises(ValidationError, match="10 MB"):
+        service.upload(
+            1,
+            filename="large.png",
+            content=oversized_content,
+            content_type="image/png",
+            storage=storage,
+        )
+
+    storage.upload.assert_not_called()
+    repository.create.assert_not_called()
+    session.get.assert_not_called()
+
+
+def test_upload_image_rejects_missing_product(service_setup):
+    service, repository, session = service_setup
+    session.get.return_value = None
+    storage = MagicMock()
+    png_content = b"\x89PNG\r\n\x1a\n" + b"fake-image-content"
+
+    with pytest.raises(NotFoundError, match="Product not found"):
+        service.upload(
+            999,
+            filename="sticker.png",
+            content=png_content,
+            content_type="image/png",
+            storage=storage,
+        )
+
+    storage.upload.assert_not_called()
+    repository.create.assert_not_called()
+
+
+def test_upload_image_deletes_cloud_file_if_database_save_fails(
+    service_setup, product
+):
+    service, repository, session = service_setup
+    session.get.return_value = product
+    repository.get_by_storage_key.return_value = None
+    repository.create.side_effect = IntegrityError(
+        "INSERT", {}, Exception("constraint violation")
+    )
+
+    storage = MagicMock()
+    storage.upload.return_value = (
+        "products/1/unique.png",
+        "https://example.supabase.co/storage/v1/object/public/product-images/products/1/unique.png",
+    )
+    png_content = b"\x89PNG\r\n\x1a\n" + b"fake-image-content"
+
+    with pytest.raises(ConflictError):
+        service.upload(
+            1,
+            filename="sticker.png",
+            content=png_content,
+            content_type="image/png",
+            storage=storage,
+        )
+
+    storage.upload.assert_called_once()
+    storage.delete.assert_called_once_with("products/1/unique.png")
+
+# -------------------------
+# Upload
+# -------------------------
+
+def test_detect_image_type():
+    assert ProductImageService._detect_image_type(
+        b"\xff\xd8\xff" + b"jpeg-data"
+    ) == "image/jpeg"
+
+    assert ProductImageService._detect_image_type(
+        b"\x89PNG\r\n\x1a\n" + b"png-data"
+    ) == "image/png"
+
+    assert ProductImageService._detect_image_type(
+        b"RIFF" + b"\x00\x00\x00\x00" + b"WEBP" + b"webp-data"
+    ) == "image/webp"
+
+    assert ProductImageService._detect_image_type(b"not an image") is None
+
+
+@pytest.mark.parametrize(
+    ("content", "content_type", "message"),
+    [
+        (b"", "image/png", "cannot be empty"),
+        (b"not an image", "image/png", "Unsupported image file"),
+        (
+            b"\x89PNG\r\n\x1a\nfake-png",
+            "image/jpeg",
+            "does not match",
+        ),
+    ],
+)
+def test_upload_rejects_invalid_image(
+    service_setup, product, content, content_type, message
+):
+    service, repository, session = service_setup
+    session.get.return_value = product
+    storage = MagicMock()
+
+    with pytest.raises(ValidationError, match=message):
+        service.upload(
+            1,
+            filename="image.png",
+            content=content,
+            content_type=content_type,
+            storage=storage,
+        )
+
+    storage.upload.assert_not_called()
+    repository.create.assert_not_called()
+
+
+def test_upload_rejects_oversized_image(service_setup, product):
+    service, repository, session = service_setup
+    session.get.return_value = product
+    storage = MagicMock()
+
+    with pytest.raises(ValidationError, match="must not exceed 10 MB"):
+        service.upload(
+            1,
+            filename="large.png",
+            content=b"\x89PNG\r\n\x1a\n" + b"x" * (10 * 1024 * 1024),
+            content_type="image/png",
+            storage=storage,
+        )
+
+    storage.upload.assert_not_called()
+    repository.create.assert_not_called()
+
+
+def test_upload_rejects_negative_sort_order(service_setup, product):
+    service, repository, session = service_setup
+    session.get.return_value = product
+    storage = MagicMock()
+
+    with pytest.raises(ValidationError, match="zero or greater"):
+        service.upload(
+            1,
+            filename="image.png",
+            content=b"\x89PNG\r\n\x1a\nvalid-test-data",
+            content_type="image/png",
+            sort_order=-1,
+            storage=storage,
+        )
+
+    storage.upload.assert_not_called()
+    repository.create.assert_not_called()
+
+
+def test_upload_rejects_missing_product(service_setup):
+    service, repository, session = service_setup
+    session.get.return_value = None
+    storage = MagicMock()
+
+    with pytest.raises(NotFoundError, match="Product not found"):
+        service.upload(
+            999,
+            filename="image.png",
+            content=b"\x89PNG\r\n\x1a\nvalid-test-data",
+            content_type="image/png",
+            storage=storage,
+        )
+
+    storage.upload.assert_not_called()
+    repository.create.assert_not_called()
+
+
+def test_upload_success(service_setup, product, product_image):
+    service, repository, session = service_setup
+    session.get.return_value = product
+    repository.get_by_storage_key.return_value = None
+    repository.create.return_value = product_image
+    storage = MagicMock()
+    storage.upload.return_value = (
+        "products/1/unique.png",
+        "https://example.com/products/1/unique.png",
+    )
+
+    result = service.upload(
+        1,
+        filename="sticker.png",
+        content=b"\x89PNG\r\n\x1a\nvalid-test-data",
+        content_type="image/png",
+        alt_text="Sticker",
+        is_primary=True,
+        storage=storage,
+    )
+
+    assert result is product_image
+    storage.upload.assert_called_once()
+    repository.create.assert_called_once()
+
+    values = repository.create.call_args.args[0]
+    assert values["product_id"] == 1
+    assert values["storage_key"] == "products/1/unique.png"
+    assert values["content_type"] == "image/png"
+    assert values["file_size_bytes"] == len(
+        b"\x89PNG\r\n\x1a\nvalid-test-data"
+    )
+    assert values["alt_text"] == "Sticker"
+    assert values["is_primary"] is True
+    storage.delete.assert_not_called()
+
+
+def test_upload_cleans_up_storage_when_database_write_fails(
+    service_setup, product
+):
+    service, repository, session = service_setup
+    session.get.return_value = product
+    repository.get_by_storage_key.return_value = None
+    repository.create.side_effect = IntegrityError(
+        "INSERT", {}, Exception("constraint violation")
+    )
+    storage = MagicMock()
+    storage.upload.return_value = (
+        "products/1/unique.png",
+        "https://example.com/products/1/unique.png",
+    )
+
+    with pytest.raises(ConflictError):
+        service.upload(
+            1,
+            filename="sticker.png",
+            content=b"\x89PNG\r\n\x1a\nvalid-test-data",
+            content_type="image/png",
+            storage=storage,
+        )
+
+    storage.upload.assert_called_once()
+    storage.delete.assert_called_once_with("products/1/unique.png")
+

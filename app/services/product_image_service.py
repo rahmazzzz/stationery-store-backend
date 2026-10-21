@@ -6,6 +6,10 @@ from app.models.product import Product
 from app.models.product_image import ProductImage
 from app.repositories.product_image_repository import ProductImageRepository
 from app.schemas.product_image import ProductImageCreate, ProductImageUpdate
+from app.clients.storage_client import (
+    SupabaseStorageClient,
+    get_storage_client,
+)
 
 
 class ProductImageService:
@@ -85,6 +89,94 @@ class ProductImageService:
         with self.session.begin_nested():
             self.images.clear_primary_for_product(product_id, except_id=image_id)
             return self.images.update(image, {"is_primary": True})
+    
+    @staticmethod
+    def _detect_image_type(content: bytes) -> str | None:
+        """Detect supported image types from their file signatures."""
+        if content.startswith(b"\xff\xd8\xff"):
+            return "image/jpeg"
+
+        if content.startswith(b"\x89PNG\r\n\x1a\n"):
+            return "image/png"
+
+        if (
+            len(content) >= 12
+            and content.startswith(b"RIFF")
+            and content[8:12] == b"WEBP"
+        ):
+            return "image/webp"
+
+        return None
+
+    def upload(
+        self,
+        product_id: int,
+        *,
+        filename: str,
+        content: bytes,
+        content_type: str,
+        alt_text: str | None = None,
+        sort_order: int = 0,
+        is_primary: bool = False,
+        storage: SupabaseStorageClient | None = None,
+    ) -> ProductImage:
+        """Upload an image to cloud storage and save its database record."""
+        max_size = 10 * 1024 * 1024
+
+        if not content:
+            raise ValidationError("The uploaded image cannot be empty.")
+
+        if len(content) > max_size:
+            raise ValidationError("Image size must not exceed 10 MB.")
+
+        detected_type = self._detect_image_type(content)
+
+        if detected_type is None:
+            raise ValidationError(
+                "Unsupported image file. Upload a JPEG, PNG, or WebP image."
+            )
+
+        if content_type.lower() != detected_type:
+            raise ValidationError(
+                "The uploaded file content does not match its declared image type."
+            )
+
+        if sort_order < 0:
+            raise ValidationError("sort_order must be zero or greater.")
+
+        # Check the product before creating an external storage object.
+        self._require_product(product_id)
+
+        storage_client = storage or get_storage_client()
+
+        storage_key, image_url = storage_client.upload(
+            product_id=product_id,
+            filename=filename,
+            content=content,
+            content_type=detected_type,
+        )
+
+        try:
+            return self.create(
+                product_id,
+                ProductImageCreate(
+                    image_url=image_url,
+                    storage_key=storage_key,
+                    alt_text=alt_text,
+                    sort_order=sort_order,
+                    is_primary=is_primary,
+                    content_type=detected_type,
+                    file_size_bytes=len(content),
+                ),
+            )
+        except Exception:
+            # Avoid leaving an orphaned cloud file if saving fails.
+            try:
+                storage_client.delete(storage_key)
+            except Exception:
+                # Preserve the original database/service error.
+                pass
+            raise
 
     def delete(self, product_id: int, image_id: int) -> None:
         image = self.get_for_product(product_id, image_id)
