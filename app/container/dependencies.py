@@ -1,4 +1,4 @@
-
+﻿
 from collections.abc import Generator
 from typing import TypedDict
 
@@ -57,9 +57,36 @@ class Dependencies:
             "email": user.email,
         }
 
+    @staticmethod
+    def get_optional_current_user(
+        credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
+    ) -> CurrentUser | None:
+        """Return the authenticated user, or None for a guest."""
+        if credentials is None:
+            return None
+
+        try:
+            response = auth_client.auth.get_user(credentials.credentials)
+        except AuthApiError as exc:
+            raise UnauthorizedError(
+                "Invalid or expired access token."
+            ) from exc
+
+        user = response.user
+
+        if user is None:
+            raise UnauthorizedError("Invalid or expired access token.")
+
+        return {
+            "user_id": str(user.id),
+            "email": user.email,
+        }
+
+
 
 # Preserve the existing dependency function names so current routers
 # and tests do not need to change.
 get_database_session = Dependencies.get_database_session
 get_write_database_session = Dependencies.get_write_database_session
 get_current_user = Dependencies.get_current_user
+get_optional_current_user = Dependencies.get_optional_current_user
