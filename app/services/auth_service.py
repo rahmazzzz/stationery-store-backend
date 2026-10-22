@@ -1,5 +1,5 @@
+import logging
 from supabase_auth.errors import AuthApiError
-
 from app.clients.auth_client import auth_client
 from app.exceptions import (
     ConflictError,
@@ -13,6 +13,8 @@ from app.schemas.auth import (
 )
 
 
+logger = logging.getLogger(__name__)
+
 class AuthService:
     
     @staticmethod
@@ -25,6 +27,12 @@ class AuthService:
                 }
             )
         except AuthApiError as exc:
+            logger.warning(
+            "Supabase sign-up failed: status=%s, code=%s",
+            getattr(exc, "status", None),
+            getattr(exc, "code", None),
+)
+
             message = getattr(exc, "message", "")
             normalized_message = message.lower()
 

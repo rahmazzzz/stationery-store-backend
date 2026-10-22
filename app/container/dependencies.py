@@ -1,15 +1,15 @@
 ﻿
 from collections.abc import Generator
 from typing import TypedDict
-
 from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 from supabase_auth.errors import AuthApiError
-
 from app.clients.auth_client import auth_client
 from app.core.database import get_db, get_write_db
 from app.exceptions import UnauthorizedError
+from fastapi import Depends, HTTPException
+from app.core.config import settings
 
 
 class CurrentUser(TypedDict):
@@ -84,9 +84,22 @@ class Dependencies:
 
 
 
+
 # Preserve the existing dependency function names so current routers
 # and tests do not need to change.
 get_database_session = Dependencies.get_database_session
 get_write_database_session = Dependencies.get_write_database_session
 get_current_user = Dependencies.get_current_user
 get_optional_current_user = Dependencies.get_optional_current_user
+
+def get_current_admin(
+    current_user: CurrentUser = Depends(get_current_user),
+) -> CurrentUser:
+    """Require an authenticated user to be on the admin allowlist."""
+    if current_user["user_id"] not in settings.admin_user_id_set:
+        raise HTTPException(
+            status_code=403,
+            detail="Administrator access is required.",
+        )
+
+    return current_user

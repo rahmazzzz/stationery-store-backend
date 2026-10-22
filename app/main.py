@@ -10,6 +10,11 @@ from app.routers.product_image_router import router as product_image_router
 from app.routers.auth_router import router as auth_router
 from app.routers.cart import router as cart_router
 from app.routers.order import router as order_router
+from app.routers.delivery_city_router import router as delivery_city_router
+from app.routers.delivery_city_router import (
+    public_router as public_delivery_city_router,
+)
+
 
 
 app = FastAPI(
@@ -26,6 +31,9 @@ app.include_router(product_image_router)
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(cart_router)
 app.include_router(order_router)
+app.include_router(delivery_city_router)
+app.include_router(public_delivery_city_router)
+
 
 
 @app.get("/health", tags=["Health"])
