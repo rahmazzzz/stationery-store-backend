@@ -9,3 +9,4 @@ pytest
 httpx
 supabase
 python-multipart
+email-validator
