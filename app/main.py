@@ -9,6 +9,7 @@ from app.routers.product_router import router as product_router
 from app.routers.product_image_router import router as product_image_router
 from app.routers.auth_router import router as auth_router
 from app.routers.cart import router as cart_router
+from app.routers.order import router as order_router
 
 
 app = FastAPI(
@@ -24,6 +25,7 @@ app.include_router(product_router)
 app.include_router(product_image_router)
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(cart_router)
+app.include_router(order_router)
 
 
 @app.get("/health", tags=["Health"])
