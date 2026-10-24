@@ -1,7 +1,9 @@
-
+import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
 
-
+from app.container.dependencies import get_current_user
+from app.core.config import settings
 
 def create_category(
     api_client: TestClient,
@@ -50,6 +52,21 @@ def create_product(
     assert response.status_code == 201, response.text
     return response.json()
 
+def authenticate_as(
+    api_client: TestClient,
+    monkeypatch,
+    *,
+    user_id: str,
+) -> None:
+    """Authenticate the test client as a specific user."""
+    monkeypatch.setattr(settings, "admin_user_ids", "admin-test-user")
+
+    api_client.app.dependency_overrides[get_current_user] = (
+        lambda: {
+            "user_id": user_id,
+            "email": f"{user_id}@example.com",
+        }
+    )
 
 def test_create_product_returns_201(api_client: TestClient) -> None:
     category_id = create_category(api_client)
@@ -524,3 +541,125 @@ def test_update_product_allows_price_above_existing_fixed_discount(
     assert updated_product["price"] == "50.00"
     assert updated_product["discount_type"] == "fixed"
     assert updated_product["discount_value"] == "20.00"
+
+
+def test_admin_can_update_product_inventory(
+    api_client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    authenticate_as(
+        api_client,
+        monkeypatch,
+        user_id="admin-test-user",
+    )
+
+    category_id = create_category(api_client)
+    product = create_product(api_client, category_id=category_id)
+
+    response = api_client.patch(
+        f"/api/v1/products/{product['id']}/inventory",
+        json={"stock_quantity": 25},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["stock_quantity"] == 25
+    assert response.json()["reserved_quantity"] == 0
+
+
+def test_non_admin_cannot_update_product_inventory(
+    api_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    authenticate_as(
+        api_client,
+        monkeypatch,
+        user_id="customer-test-user",
+    )
+
+    category_id = create_category(api_client)
+    product = create_product(api_client, category_id=category_id)
+
+    response = api_client.patch(
+        f"/api/v1/products/{product['id']}/inventory",
+        json={"stock_quantity": 25},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Administrator access is required."
+
+
+def test_admin_cannot_set_negative_inventory(
+    api_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    authenticate_as(
+        api_client,
+        monkeypatch,
+        user_id="admin-test-user",
+    )
+
+    category_id = create_category(api_client)
+    product = create_product(api_client, category_id=category_id)
+
+    response = api_client.patch(
+        f"/api/v1/products/{product['id']}/inventory",
+        json={"stock_quantity": -1},
+    )
+
+    assert response.status_code == 422
+
+
+def test_admin_cannot_update_inventory_for_nonexistent_product(
+    api_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    authenticate_as(
+        api_client,
+        monkeypatch,
+        user_id="admin-test-user",
+    )
+
+    response = api_client.patch(
+        "/api/v1/products/999999/inventory",
+        json={"stock_quantity": 25},
+    )
+
+    assert response.status_code == 404
+
+def test_admin_cannot_reduce_inventory_below_reserved_quantity(
+    api_client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    authenticate_as(
+        api_client,
+        monkeypatch,
+        user_id="admin-test-user",
+    )
+
+    category_id = create_category(api_client)
+    product = create_product(api_client, category_id=category_id)
+
+    # Simulate 5 units already reserved for orders.
+    from app.models import Product
+
+    db_product = db_session.get(Product, product["id"])
+    assert db_product is not None
+
+    db_product.stock_quantity = 10
+    db_product.reserved_quantity = 5
+    db_session.flush()
+
+    response = api_client.patch(
+        f"/api/v1/products/{product['id']}/inventory",
+        json={"stock_quantity": 4},
+    )
+
+    assert response.status_code == 422, response.text
+    assert "reserved" in response.json()["detail"].lower()
+
+    # The failed update must not change the existing stock.
+    db_session.refresh(db_product)
+    assert db_product.stock_quantity == 10
+    assert db_product.reserved_quantity == 5

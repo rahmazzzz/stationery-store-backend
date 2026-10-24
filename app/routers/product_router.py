@@ -6,10 +6,17 @@ from fastapi import APIRouter, Depends, Path, Query, status
 from sqlalchemy.orm import Session
 
 from app.container.dependencies import (
+    get_current_admin,
     get_database_session,
     get_write_database_session,
 )
-from app.schemas.product import ProductCreate, ProductResponse, ProductUpdate
+from app.schemas.product import (
+    InventoryResponse,
+    InventoryUpdate,
+    ProductCreate,
+    ProductResponse,
+    ProductUpdate,
+)
 from app.services.product_service import ProductService
 
 
@@ -83,3 +90,20 @@ def deactivate_product(
     session: Annotated[Session, Depends(get_write_database_session)],
 ):
     return ProductService(session).deactivate(product_id)
+
+
+@router.patch(
+    "/{product_id}/inventory",
+    response_model=InventoryResponse,
+    tags=["Admin - Inventory"],
+    dependencies=[Depends(get_current_admin)],
+)
+def update_product_inventory(
+    product_id: Annotated[int, Path(gt=0)],
+    data: InventoryUpdate,
+    session: Annotated[Session, Depends(get_write_database_session)],
+):
+    return ProductService(session).update_inventory(
+        product_id,
+        data.stock_quantity,
+    )

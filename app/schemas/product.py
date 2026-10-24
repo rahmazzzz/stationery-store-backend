@@ -163,3 +163,19 @@ class ProductResponse(BaseModel):
     discount_type: DiscountType
     discount_value: Decimal
     is_active: bool
+
+
+class InventoryUpdate(BaseModel):
+    """Request schema for updating a product's inventory."""
+
+    stock_quantity: int = Field(ge=0)
+
+
+class InventoryResponse(BaseModel):
+    """Response schema for admin inventory operations."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    stock_quantity: int
+    reserved_quantity: int

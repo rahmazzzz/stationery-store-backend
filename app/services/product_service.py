@@ -40,6 +40,28 @@ class ProductService:
 
         if product is None:
             raise NotFoundError("Product not found.")
+        return product
+    def update_inventory(self, product_id: int, stock_quantity: int):
+        """Update stock without invalidating existing reservations."""
+        product = self.get_by_id(product_id)
+        session = self.products.session
+
+        try:
+            with session.begin_nested():
+                if stock_quantity < product.reserved_quantity:
+                    raise ValidationError(
+                        "Stock quantity cannot be lower than the quantity "
+                        "already reserved for orders."
+                    )
+
+                product.stock_quantity = stock_quantity
+                session.flush()
+                session.refresh(product)
+
+        except IntegrityError as exc:
+            raise ValidationError(
+                "The inventory update violates a database constraint."
+            ) from exc
 
         return product
 
