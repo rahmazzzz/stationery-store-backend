@@ -16,3 +16,4 @@ venv/
 # Test and coverage artifacts
 .coverage
 htmlcov/
+!.env.test.example
