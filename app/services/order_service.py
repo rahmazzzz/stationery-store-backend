@@ -1,15 +1,15 @@
-
+﻿
 from decimal import Decimal
-
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app.exceptions import NotFoundError, ValidationError
 from app.models.order import Order, OrderItem
+from app.models.product import Product
 from app.repositories.cart_repository import CartRepository
 from app.services.cart_service import CartService
 from app.services.delivery_city_service import DeliveryCityService
 from app.schemas.order import CheckoutCreate
-
 
 class OrderService:
     def __init__(self, session: Session) -> None:
@@ -69,6 +69,30 @@ class OrderService:
 
         shipping_fee = self.delivery_city_service.get_shipping_fee(data.city)
         total = subtotal + shipping_fee
+
+        for cart_item in sorted(cart.items, key=lambda item: item.product.id):
+            product = cart_item.product
+            quantity = cart_item.quantity
+
+            statement = (
+                update(Product)
+                .where(
+                    Product.id == product.id,
+                    Product.is_active.is_(True),
+                    Product.stock_quantity - Product.reserved_quantity >= quantity,
+                )
+                .values(
+                    reserved_quantity=Product.reserved_quantity + quantity,
+                )
+                .returning(Product.id)
+            )
+
+            reserved_product_id = self.session.execute(statement).scalar_one_or_none()
+
+            if reserved_product_id is None:
+                raise ValidationError(
+                    f"Insufficient stock for product '{product.name}'."
+                )
 
         order = Order(
             customer_id=customer_id,

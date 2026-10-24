@@ -1,14 +1,13 @@
-
-
-from datetime import datetime
+﻿from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     Boolean,
-    CheckConstraint,
     DateTime,
+    CheckConstraint,
     ForeignKey,
+    Integer,
     Numeric,
     String,
     Text,
@@ -56,9 +55,19 @@ class Product(Base):
             "discount_type != 'none' OR discount_value = 0",
             name="ck_products_no_discount_value_when_none",
         ),
+        CheckConstraint(
+            "stock_quantity >= 0",
+            name="ck_products_stock_quantity_non_negative",
+        ),
+        CheckConstraint(
+            "reserved_quantity >= 0",
+            name="ck_products_reserved_quantity_non_negative",
+        ),
+        CheckConstraint(
+           "reserved_quantity <= stock_quantity",
+           name="ck_products_reserved_not_above_stock",
+        ),
     )
-
-
 
      # Primary key
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -157,4 +166,19 @@ class Product(Base):
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
+    )
+
+
+    stock_quantity: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+
+    reserved_quantity: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
     )

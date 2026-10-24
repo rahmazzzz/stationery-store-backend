@@ -1,4 +1,4 @@
-
+﻿
 from sqlalchemy.orm import configure_mappers
 
 from app.models import Category, Product
@@ -24,6 +24,8 @@ def test_product_has_expected_columns() -> None:
         "is_active",
         "created_at",
         "updated_at",
+        "stock_quantity",
+        "reserved_quantity",
     }
 
     assert set(Product.__table__.columns.keys()) == expected_columns

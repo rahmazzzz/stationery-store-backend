@@ -1,4 +1,3 @@
-
 from decimal import Decimal
 
 from sqlalchemy import (
@@ -73,18 +72,6 @@ class Order(Base):
 class OrderItem(Base):
     __tablename__ = "order_items"
 
-    __table_args__ = (
-        CheckConstraint("quantity > 0", name="ck_order_items_quantity_positive"),
-        CheckConstraint(
-            "unit_price >= 0",
-            name="ck_order_items_unit_price_nonnegative",
-        ),
-        CheckConstraint(
-            "line_total >= 0",
-            name="ck_order_items_line_total_nonnegative",
-        ),
-    )
-
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
 
     order_id: Mapped[int] = mapped_column(
@@ -95,6 +82,20 @@ class OrderItem(Base):
     product_id: Mapped[int | None] = mapped_column(
         ForeignKey("products.id", ondelete="SET NULL"),
         nullable=True,
+    )
+    __table_args__ = (
+        CheckConstraint(
+            "quantity > 0",
+            name="ck_order_items_quantity_positive",
+        ),
+        CheckConstraint(
+            "unit_price >= 0",
+            name="ck_order_items_unit_price_nonnegative",
+        ),
+        CheckConstraint(
+            "line_total >= 0",
+            name="ck_order_items_line_total_nonnegative",
+        ),
     )
 
     product_name: Mapped[str] = mapped_column(String(200), nullable=False)

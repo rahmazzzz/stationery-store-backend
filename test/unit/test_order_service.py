@@ -1,4 +1,4 @@
-
+﻿
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -14,7 +14,9 @@ from app.services.order_service import OrderService
 @pytest.fixture
 def checkout_setup(monkeypatch):
     session = MagicMock()
-
+    reservation_result = MagicMock()
+    reservation_result.scalar_one_or_none.return_value = 10
+    session.execute.return_value = reservation_result
     product = SimpleNamespace(
         id=10,
         name="Notebook",
@@ -58,6 +60,8 @@ def checkout_setup(monkeypatch):
         cart_repository=cart_repository,
         delivery_service=delivery_service,
         data=data,
+        stock_quantity=10,
+        reserved_quantity=0,
     )
 
 
@@ -87,6 +91,7 @@ def test_guest_checkout_creates_order_and_clears_cart(checkout_setup):
     assert setup.cart.items == []
     setup.session.add.assert_called_once_with(order)
     assert setup.session.flush.call_count == 2
+    setup.session.execute.assert_called_once()
 
 
 def test_authenticated_checkout_uses_customer_id(checkout_setup):

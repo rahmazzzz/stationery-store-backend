@@ -1,18 +1,15 @@
-
+﻿
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, Response
+from fastapi import APIRouter, Depends, Header
 from sqlalchemy.orm import Session
 
-from app.container.dependencies import (
-    get_optional_current_user,
-    get_write_database_session,
-)
 from app.container.dependencies import (
     CurrentUser,
     get_optional_current_user,
     get_write_database_session,
 )
+from app.exceptions import ValidationError
 from app.schemas.order import CheckoutCreate, OrderResponse
 from app.services.order_service import OrderService
 
@@ -22,7 +19,6 @@ router = APIRouter(prefix="/api/v1", tags=["Orders"])
 @router.post("/checkout", response_model=OrderResponse, status_code=201)
 def checkout(
     data: CheckoutCreate,
-    response: Response,
     session: Annotated[Session, Depends(get_write_database_session)],
     current_user: Annotated[
         CurrentUser | None, Depends(get_optional_current_user)
@@ -34,12 +30,10 @@ def checkout(
 ) -> OrderResponse:
     """Create an order from the authenticated customer's or guest's cart."""
     if current_user is not None:
-        customer_id = current_user.id
+        customer_id = current_user["user_id"]
         resolved_guest_token = None
     else:
         if guest_token is None:
-            from app.exceptions import ValidationError
-
             raise ValidationError(
                 "The X-Guest-Token header is required for guest checkout."
             )
