@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-
+from app.models.product import Product
 from app.exceptions import ConflictError, NotFoundError, ValidationError
 from app.repositories.category_repository import CategoryRepository
 from app.repositories.product_repository import ProductRepository
@@ -41,13 +41,24 @@ class ProductService:
         if product is None:
             raise NotFoundError("Product not found.")
         return product
+    
+    
     def update_inventory(self, product_id: int, stock_quantity: int):
         """Update stock without invalidating existing reservations."""
-        product = self.get_by_id(product_id)
         session = self.products.session
 
         try:
             with session.begin_nested():
+                product = (
+                    session.query(Product)
+                    .filter(Product.id == product_id)
+                    .with_for_update()
+                    .one_or_none()
+                )
+
+                if product is None:
+                    raise NotFoundError("Product not found.")
+
                 if stock_quantity < product.reserved_quantity:
                     raise ValidationError(
                         "Stock quantity cannot be lower than the quantity "
@@ -64,6 +75,7 @@ class ProductService:
             ) from exc
 
         return product
+
 
     def get_by_slug(self, slug: str):
         product = self.products.get_by_slug(slug)
