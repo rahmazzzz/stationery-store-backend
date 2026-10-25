@@ -31,6 +31,7 @@ class DeliveryCityService:
         city = DeliveryCity(
             name=data.name,
             shipping_fee=data.shipping_fee,
+            is_active=data.is_active,
         )
         return self.repository.create(city)
 
@@ -49,3 +50,10 @@ class DeliveryCityService:
             setattr(city, field, value)
 
         return self.repository.update(city)
+
+    def list_active_cities(self):
+        return [
+           city
+           for city in self.repository.list_all()
+           if city.is_active
+    ]

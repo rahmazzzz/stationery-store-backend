@@ -5,7 +5,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.exceptions import NotFoundError, ValidationError
+from app.exceptions import ConflictError, NotFoundError, ValidationError
+from app.models.product import Product
 from app.models.order import Order
 from app.schemas.order import CheckoutCreate
 from app.services.order_service import OrderService
@@ -173,3 +174,141 @@ def test_checkout_rejects_inactive_product(checkout_setup):
         )
 
     setup.session.add.assert_not_called()
+
+
+def make_pending_order(
+    *,
+    order_id: int = 1,
+    customer_id: str | None = None,
+    guest_token: str | None = "guest-token-long-enough",
+    status: str = "pending",
+    items: list | None = None,
+):
+    return SimpleNamespace(
+        id=order_id,
+        customer_id=customer_id,
+        guest_token=guest_token,
+        customer_name="Test Customer",
+        phone_number="01012345678",
+        city="Alexandria",
+        delivery_address="123 Test Street",
+        subtotal=Decimal("160.00"),
+        shipping_fee=Decimal("25.00"),
+        total=Decimal("185.00"),
+        payment_method="cash_on_delivery",
+        status=status,
+        items=items or [],
+    )
+
+def setup_cancellation(monkeypatch, order: Order):
+    session = MagicMock()
+    query_result = MagicMock()
+    query_result.scalar_one_or_none.return_value = order
+    session.execute.return_value = query_result
+
+    service = OrderService(session)
+
+    return SimpleNamespace(
+        service=service,
+        session=session,
+        order=order,
+        query_result=query_result,
+    )
+
+
+def test_cancel_guest_order_releases_inventory(monkeypatch):
+    item = SimpleNamespace(product_id=10, quantity=2)
+    order = make_pending_order(items=[item])
+    setup = setup_cancellation(monkeypatch, order)
+
+    setup.service.cancel_order(
+        order.id,
+        guest_token="guest-token-long-enough",
+    )
+
+    assert order.status == "cancelled"
+    assert setup.session.execute.call_count == 2
+    setup.session.flush.assert_called_once()
+
+
+def test_cancel_order_rejects_missing_owner(checkout_setup):
+    with pytest.raises(ValidationError):
+        checkout_setup.service.cancel_order(1)
+
+
+def test_cancel_order_rejects_both_owner_types(monkeypatch):
+    setup = setup_cancellation(
+        monkeypatch,
+        make_pending_order(),
+    )
+
+    with pytest.raises(ValidationError):
+        setup.service.cancel_order(
+            1,
+            customer_id="customer-123",
+            guest_token="guest-token-long-enough",
+        )
+
+    setup.session.execute.assert_not_called()
+
+
+def test_cancel_order_rejects_order_not_found(monkeypatch):
+    setup = setup_cancellation(monkeypatch, make_pending_order())
+    setup.query_result.scalar_one_or_none.return_value = None
+
+    with pytest.raises(NotFoundError):
+        setup.service.cancel_order(
+            999,
+            guest_token="guest-token-long-enough",
+        )
+
+
+def test_cancel_order_rejects_non_pending_order(monkeypatch):
+    order = make_pending_order(status="cancelled")
+    setup = setup_cancellation(monkeypatch, order)
+
+    with pytest.raises(ConflictError):
+        setup.service.cancel_order(
+            order.id,
+            guest_token="guest-token-long-enough",
+        )
+
+    setup.session.flush.assert_not_called()
+
+
+def test_cancel_order_rejects_missing_product_reference(monkeypatch):
+    order = make_pending_order(
+        items=[SimpleNamespace(product_id=None, quantity=2)]
+    )
+    setup = setup_cancellation(monkeypatch, order)
+
+    with pytest.raises(ConflictError):
+        setup.service.cancel_order(
+            order.id,
+            guest_token="guest-token-long-enough",
+        )
+
+    setup.session.flush.assert_not_called()
+
+
+def test_cancel_order_rejects_inventory_release_failure(monkeypatch):
+    item = SimpleNamespace(product_id=10, quantity=2)
+    order = make_pending_order(items=[item])
+    setup = setup_cancellation(monkeypatch, order)
+    setup.session.execute.side_effect = [
+        setup.query_result,
+        MagicMock(
+            **{
+                "scalar_one_or_none.return_value": None,
+            }
+        ),
+    ]
+
+    with pytest.raises(ConflictError):
+        setup.service.cancel_order(
+            order.id,
+            guest_token="guest-token-long-enough",
+        )
+
+    assert order.status == "pending"
+    setup.session.flush.assert_not_called()

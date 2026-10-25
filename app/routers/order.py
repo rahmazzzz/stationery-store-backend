@@ -1,7 +1,7 @@
 ﻿
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header , status, Path
 from sqlalchemy.orm import Session
 
 from app.container.dependencies import (
@@ -44,6 +44,45 @@ def checkout(
     service = OrderService(session)
     order = service.checkout(
         data,
+        customer_id=customer_id,
+        guest_token=resolved_guest_token,
+    )
+
+    return OrderResponse.model_validate(order)
+
+@router.post(
+    "/orders/{order_id}/cancel",
+    response_model=OrderResponse,
+    status_code=status.HTTP_200_OK,
+)
+def cancel_order(
+    order_id: Annotated[int, Path(gt=0)],
+    session: Annotated[Session, Depends(get_write_database_session)],
+    current_user: Annotated[
+        CurrentUser | None, Depends(get_optional_current_user)
+    ],
+    guest_token: Annotated[
+        str | None,
+        Header(alias="X-Guest-Token", min_length=20, max_length=200),
+    ] = None,
+) -> OrderResponse:
+    """Cancel an eligible order owned by the authenticated customer or guest."""
+
+    if current_user is not None:
+        customer_id = current_user["user_id"]
+        resolved_guest_token = None
+    else:
+        if guest_token is None:
+            raise ValidationError(
+                "The X-Guest-Token header is required to cancel a guest order."
+            )
+
+        customer_id = None
+        resolved_guest_token = guest_token
+
+    service = OrderService(session)
+    order = service.cancel_order(
+        order_id,
         customer_id=customer_id,
         guest_token=resolved_guest_token,
     )

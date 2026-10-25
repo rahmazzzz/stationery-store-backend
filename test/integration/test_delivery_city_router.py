@@ -1,10 +1,7 @@
-
 from fastapi import HTTPException
 
 from app.container.dependencies import get_current_admin
-
-from app.container.dependencies import get_current_admin
-
+from app.main import app
 
 def test_admin_can_create_delivery_city(api_client):
     from app.main import app
@@ -114,3 +111,58 @@ def test_delivery_city_admin_routes_require_admin(api_client):
         assert response.status_code == 403
     finally:
         app.dependency_overrides.pop(get_current_admin, None)
+
+def test_public_endpoint_returns_active_cities(api_client):
+    app.dependency_overrides[get_current_admin] = allow_admin
+
+    try:
+        create_response = api_client.post(
+            "/api/v1/admin/delivery-cities/",
+            json={
+                "name": "Active Public Test City",
+                "shipping_fee": "25.00",
+                "is_active": True,
+            },
+        )
+        assert create_response.status_code == 201
+
+        response = api_client.get("/api/v1/delivery-cities/")
+
+        assert response.status_code == 200
+        assert any(
+            city["name"] == "Active Public Test City"
+            for city in response.json()
+        )
+    finally:
+        app.dependency_overrides.pop(get_current_admin, None)
+
+
+def test_public_endpoint_excludes_inactive_cities(api_client):
+    app.dependency_overrides[get_current_admin] = allow_admin
+
+    try:
+        create_response = api_client.post(
+            "/api/v1/admin/delivery-cities/",
+            json={
+                "name": "Inactive Public Test City",
+                "shipping_fee": "25.00",
+                "is_active": False,
+            },
+        )
+        assert create_response.status_code == 201
+
+        response = api_client.get("/api/v1/delivery-cities/")
+
+        assert response.status_code == 200
+        assert all(
+            city["name"] != "Inactive Public Test City"
+            for city in response.json()
+        )
+    finally:
+        app.dependency_overrides.pop(get_current_admin, None)
+
+
+def test_public_endpoint_does_not_require_admin(api_client):
+    response = api_client.get("/api/v1/delivery-cities/")
+
+    assert response.status_code == 200

@@ -1,5 +1,5 @@
 ﻿from decimal import Decimal
-
+from sqlalchemy import select
 import pytest
 from fastapi.testclient import TestClient
 
@@ -295,3 +295,167 @@ def test_checkout_rejects_insufficient_stock_and_keeps_cart(
     assert cart_response.status_code == 200
     assert cart_response.json()["total_items"] == 2
     assert len(cart_response.json()["items"]) == 1
+
+
+def test_guest_can_cancel_pending_order(
+    api_client: TestClient,
+    db_session,
+    checkout_product,
+    active_delivery_city,
+):
+    guest_token = add_product_to_guest_cart(
+        api_client,
+        checkout_product.id,
+    )
+
+    checkout_response = api_client.post(
+        "/api/v1/checkout",
+        headers={"X-Guest-Token": guest_token},
+        json=checkout_payload(),
+    )
+    assert checkout_response.status_code == 201, checkout_response.text
+
+    order_id = checkout_response.json()["id"]
+
+    # Confirm checkout reserved two units.
+    db_session.refresh(checkout_product)
+    assert checkout_product.reserved_quantity == 2
+
+    cancel_response = api_client.post(
+        f"/api/v1/orders/{order_id}/cancel",
+        headers={"X-Guest-Token": guest_token},
+    )
+
+    assert cancel_response.status_code == 200, cancel_response.text
+    assert cancel_response.json()["status"] == "cancelled"
+
+    # Cancellation must release the reservation without changing stock.
+    db_session.refresh(checkout_product)
+    assert checkout_product.stock_quantity == 10
+    assert checkout_product.reserved_quantity == 0
+
+    order = db_session.get(Order, order_id)
+    assert order is not None
+    assert order.status == "cancelled"
+
+
+def test_guest_cannot_cancel_another_guests_order(
+    api_client: TestClient,
+    db_session,
+    checkout_product,
+    active_delivery_city,
+):
+    guest_token = add_product_to_guest_cart(
+        api_client,
+        checkout_product.id,
+    )
+
+    checkout_response = api_client.post(
+        "/api/v1/checkout",
+        headers={"X-Guest-Token": guest_token},
+        json=checkout_payload(),
+    )
+    assert checkout_response.status_code == 201, checkout_response.text
+
+    order_id = checkout_response.json()["id"]
+
+    response = api_client.post(
+        f"/api/v1/orders/{order_id}/cancel",
+        headers={"X-Guest-Token": "another-guest-token-long-enough"},
+    )
+
+    assert response.status_code == 404
+
+    order = db_session.get(Order, order_id)
+    assert order.status == "pending"
+
+    db_session.refresh(checkout_product)
+    assert checkout_product.reserved_quantity == 2
+
+
+def test_guest_cannot_cancel_order_twice(
+    api_client: TestClient,
+    checkout_product,
+    active_delivery_city,
+):
+    guest_token = add_product_to_guest_cart(
+        api_client,
+        checkout_product.id,
+    )
+
+    checkout_response = api_client.post(
+        "/api/v1/checkout",
+        headers={"X-Guest-Token": guest_token},
+        json=checkout_payload(),
+    )
+    assert checkout_response.status_code == 201, checkout_response.text
+
+    order_id = checkout_response.json()["id"]
+    headers = {"X-Guest-Token": guest_token}
+
+    first_response = api_client.post(
+        f"/api/v1/orders/{order_id}/cancel",
+        headers=headers,
+    )
+    assert first_response.status_code == 200, first_response.text
+
+    second_response = api_client.post(
+        f"/api/v1/orders/{order_id}/cancel",
+        headers=headers,
+    )
+    assert second_response.status_code == 409
+
+
+def test_authenticated_customer_can_cancel_own_order(
+    api_client: TestClient,
+    db_session,
+    checkout_product,
+    active_delivery_city,
+):
+    def override_current_user():
+        return {
+            "user_id": "customer-123",
+            "email": "customer@example.com",
+        }
+
+    app.dependency_overrides[get_optional_current_user] = (
+        override_current_user
+    )
+
+    try:
+        cart_response = api_client.post(
+            "/api/v1/cart/items",
+            json={
+                "product_id": checkout_product.id,
+                "quantity": 2,
+            },
+        )
+        assert cart_response.status_code == 200, cart_response.text
+
+        checkout_response = api_client.post(
+            "/api/v1/checkout",
+            json=checkout_payload(),
+        )
+        assert checkout_response.status_code == 201, checkout_response.text
+
+        order_id = checkout_response.json()["id"]
+
+        cancel_response = api_client.post(
+            f"/api/v1/orders/{order_id}/cancel",
+        )
+
+        assert cancel_response.status_code == 200, cancel_response.text
+        assert cancel_response.json()["status"] == "cancelled"
+
+        db_session.refresh(checkout_product)
+        assert checkout_product.reserved_quantity == 0
+
+        order = db_session.get(Order, order_id)
+        assert order.customer_id == "customer-123"
+        assert order.guest_token is None
+
+    finally:
+        app.dependency_overrides.pop(
+            get_optional_current_user,
+            None,
+        )

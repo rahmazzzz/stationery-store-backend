@@ -19,7 +19,7 @@ ShippingFee = Annotated[
 class DeliveryCityCreate(BaseModel):
     name: CityName
     shipping_fee: ShippingFee
-
+    is_active: bool = True
 
 class DeliveryCityUpdate(BaseModel):
     name: CityName | None = None
